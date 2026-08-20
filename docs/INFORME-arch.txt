@@ -1,0 +1,73 @@
+================================================================================
+INFORME - Instancia ARCH (roles API + SHARED) - Continuacion final
+Monorepo: manteiner_amilab  |  Fecha: 2026-08-09
+================================================================================
+
+0. ESTADO DE PARTIDA
+--------------------------------------------------------------------------------
+- DUAL BUILD de @amilab/maintenance-shared YA existente y verificado (NO se
+  rehizo): package.json con exports import/require, tsconfig.cjs.json y
+  dist/cjs/index.js CommonJS.
+- Verificacion dual build desde api:
+    node -e "const s=require('@amilab/maintenance-shared'); console.log(Object.keys(s).length)"
+  => 48 exports. OK.
+
+1. ARCHIVOS TOCADOS
+--------------------------------------------------------------------------------
+1) amilab-maintenance-api/test/unit/bookings/application/bookings.service.spec.ts
+   - CAUSA RAIZ de la falla del test: el constructor de BookingsService ahora
+     recibe 5 dependencias (se agrego auditRepository: Repository<BookingAuditOrmEntity>
+     entre bookingsRepository y usersRepository), pero el spec pasaba 4. Eso
+     desplazaba los argumentos: usersRepository recibia el mock de availability,
+     availabilityService recibia el mock de notification, etc., produciendo
+     "this.usersRepository.findById is not a function" y
+     "this.availabilityService.hasAvailabilitySlots is not a function".
+   - CAMBIO: se agrego mock auditRepository { create: jest.fn(i=>i), save: jest.fn() }
+     con tipo AuditRepositoryMock (Pick de jest.Mocked<Repository<BookingAuditOrmEntity>>,
+     'create'|'save') y se inserto como 2do argumento en los DOS puntos de
+     construccion (beforeEach y optimizedService). Se agrego el import de
+     BookingAuditOrmEntity.
+   - NOTA: no fue un problema de ts-jest/jest ("Unexpected token export" nunca
+     aparecio); el test corria, fallaba por logica. ts-jest queda en 29.4.9
+     (ver pendientes).
+
+2) amilab-maintenance-api/.env.example
+   - Se reemplazo DB_DATABASE=hc_soluciones por DB_DATABASE=amilab_maintenance
+     (unico vestigio de HC en el sweep; el nombre canonico es el de
+     docker-compose.yml / compose.yml: amilab_maintenance).
+
+NO se toco admin, mobile, ni package.json de api/shared. Sin commits ni push.
+
+2. VALIDACIONES EJECUTADAS Y RESULTADO
+--------------------------------------------------------------------------------
+| # | Comando / verificacion                                  | Resultado       |
+|---|---------------------------------------------------------|-----------------|
+| 1 | require('@amilab/maintenance-shared') desde api          | 48 exports OK   |
+| 2 | pnpm test test/unit/bookings/application/bookings.service.spec.ts | 43/43 pass (antes 12/43) |
+| 3 | moduleNameMapper en jest config de api                   | solo ^src/(.*)$; sin referencia a ../amilab-maintenance-shared/src. No existe jest.config.* (config inline en package.json) |
+| 4 | pnpm run typecheck (shared, tsc -p tsconfig.json)        | OK (exit 0)     |
+| 5 | pnpm run typecheck (api, tsc -p tsconfig.build.json)     | OK (exit 0)     |
+| 6 | pnpm run build (api, nest build)                         | OK (exit 0)     |
+| 7 | rg -ni "hc.soluciones|hc_soluciones|hc-backend" api+shared (src, docs) | 0 matches luego de corregir .env.example |
+| 8 | Barrido amplio de "hc" (hcLevel, isVerifiedByHc, CL-HC-003, *_HC, etc.) | Solo terminos de dominio legitimos, no referencias a HC Soluciones / hc-backend |
+
+3. PENDIENTES / OBSERVACIONES
+--------------------------------------------------------------------------------
+- ts-jest@29.4.9 con jest@30.4.2: funciona hoy (sin errores de transform),
+  pero ts-jest 29 declara peer jest ^29. Recomendado (no bloqueante): subir a
+  ts-jest@^30 (pnpm add -D ts-jest@^30) para alinear peers. No se hizo porque
+  la condicion del fallo "Unexpected token export" no se presento.
+- Node: engines del api piden node >=22 <25; el entorno corre node v26.3.0
+  (mise) y pnpm 11.5.1. Tests, typecheck y build pasan igualmente; alinear
+  version de node si se quiere eliminar el warning de engine.
+- Audit log: el path writeAuditEntry queda cubierto por el mock, pero no hay
+  assertion sobre el contenido del registro en booking_audit_log; opcional
+  agregar cobertura.
+- .env.example: DB_DATABASE ahora amilab_maintenance; DB_SYNCHRONIZE=true crea
+  el esquema al primer arranque (no hay migracion de datos viejos de
+  hc_soluciones, es un entorno dev local).
+- Fuera de alcance por reglas: admin, mobile y lectura/escritura fuera del cwd.
+
+================================================================================
+FIN DEL INFORME
+================================================================================

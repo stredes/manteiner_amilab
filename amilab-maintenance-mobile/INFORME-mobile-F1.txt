@@ -1,0 +1,130 @@
+================================================================================
+INFORME F1 OFFLINE-FIRST MOBILE - Amilab Maintenance Mobile
+Rol: DEBIAN (mobile) - ejecutado en Arch 192.168.1.89 (lucas)
+Fecha: 2026-08-09
+================================================================================
+
+OBJETIVO:
+Implementar F1: offline-first mobile (expo-sqlite + outbox + sync pull-first)
+sobre el flujo de OT ya construido (commit d4f3155).
+
+ARCHIVOS NUEVOS (src/features/sync/):
+-----------------------------------
+domain/
+  SyncTypes.ts                    # Tipos: OutboxEntry, SyncState, SyncResult
+
+infrastructure/
+  localDatabase.ts                # Singleton expo-sqlite + schema (WAL mode)
+                                 # Tablas: work_orders_cache, outbox, sync_meta
+                                 # Migración versionada (schema_meta)
+  WorkOrderCache.ts               # Repositorio caché: upsertServerOrders (server wins
+                                 # unless localRev>0), findToday (dueAt filter),
+                                 # findById, applyLocalStatus (localRev++),
+                                 # markSyncedFromServer, markDeleted
+  OutboxQueue.ts                  # Cola outbox: enqueue (idempotencyKey), pending,
+                                 # markDone (DELETE), markFailed (retry), pendingCount
+  OfflineWorkOrderRepository.ts   # Implementa WorkOrderRepository:
+                                 # - findToday/findById -> cache (instantáneo)
+                                 # - startOrder/completeOrder -> optimistic update
+                                 #   en cache + enqueue outbox -> return local
+                                 # - sync(token) -> pull (findToday) + push (outbox)
+
+application/
+  SyncEngine.ts                   # Motor de sincronización:
+                                 # - init(): abre DB, lee pendingCount
+                                 # - connectNetwork(): NetInfo listener,
+                                 #   auto-sync on reconnect
+                                 # - sync(): lock + pull + push + update meta
+                                 # - refreshPendingCount()
+  useSync.ts                      # Hook React: subscribe SyncEngine state,
+                                 # auto-sync on: auth=authenticated, NetInfo online,
+                                 # AppState active. Returns { isOnline, isSyncing,
+                                 # lastError, lastSyncAt, pendingCount, sync() }
+
+presentation/
+  SyncStatusBanner.tsx            # Banner visible en TodayWorkOrdersScreen:
+                                 # - syncing: "Sincronizando..."
+                                 # - pending>0: "N cambios pendientes" (tap=force sync)
+                                 # - offline: "Sin conexión. Los cambios se enviarán..."
+                                 # - error: muestra error + botón reintentar
+                                 # - online+clean: null
+
+ARCHIVOS MODIFICADOS:
+---------------------
+1. package.json / package-lock.json / app.json
+   - expo-sqlite ~16.0.10 añadido (plugin en app.json)
+
+2. src/features/work-orders/application/useWorkOrders.ts
+   - Import HttpWorkOrderRepository -> OfflineWorkOrderRepository
+   - const repository = new OfflineWorkOrderRepository()
+   - Mantiene misma API pública (findToday, findById, mutations)
+
+3. src/features/work-orders/presentation/TodayWorkOrdersScreen.tsx
+   - Import SyncStatusBanner
+   - ListHeaderComponent: <SyncStatusBanner /> sobre header existente
+
+4. .expo/types/router.d.ts (regenerado manualmente)
+   - Añadidas rutas faltantes /work-orders/[id] y /work-orders/[id]/flow
+   - Estas rutas existían desde commit d4f3155 pero tipos estaban stale
+
+FLUJO OFFLINE-FIRST IMPLEMENTADO:
+---------------------------------
+LECTURAS (findToday/findById):
+  - Siempre leen de caché SQLite (cero latencia, funciona offline)
+  - Cache poblada por pull periódico (app start, focus, reconectar, pull-to-refresh)
+
+ESCRITURAS (startOrder/completeOrder):
+  1. Actualización optimista en caché: status=IN_PROGRESS/COMPLETED,
+     metadata local (startedAt/completedAt, evidenceStaged), localRev++
+  2. Encolado en outbox con idempotencyKey único
+  3. Retorno inmediato del WorkOrder local a la UI
+  4. Background: si online -> push inmediato; si offline -> queda pendiente
+
+SINCRONIZACIÓN (pull-then-push):
+  1. pull: GET /maintenance/modules/ordenes-trabajo/records?dateFrom=today&dateTo=today
+     - Upsert en caché: sobrescribe solo si localRev===0 (server wins unless dirty)
+  2. push: Drena outbox FIFO
+     - WORK_ORDER_START -> POST /records/:id/actions/start
+     - WORK_ORDER_COMPLETE -> POST /records/:id/actions/complete (evidence en payload)
+     - Éxito: markSyncedFromServer (overwrite full, localRev=0) + markDone (DELETE outbox)
+     - Fallo red: stop push, deja pendientes (reintento en próximo sync)
+     - Fallo 4xx: markFailed con lastError, no reintenta (conflicto servidor)
+  3. Metadatos: sync_meta.lastSyncAt, lastCursor actualizados
+
+IDEMPOTENCIA:
+  - idempotencyKey = "OPERATION:entityId:timestamp" en cada outbox entry
+  - Se envía en metadataPatch.clientRequestId (servidor no desduplica aún - futuro F2)
+
+TUMBAS (tombstones):
+  - work_orders_cache.deletedAt para soft-delete futuro
+  - outbox: NUNCA hard delete (markDone = DELETE del entry; markFailed = status FAILED)
+  - Sin tombstones por ausencia en pull (pull solo today -> ausencia no implica delete)
+
+VALIDACIONES:
+-------------
+✓ npx tsc --noEmit        -> 0 errores (types pass)
+✓ npm run lint            -> 0 errores (solo 3 warnings pre-existentes)
+✓ expo-sqlite plugin OK en app.json
+✓ Import paths correctos (@/src/features/sync/...)
+✓ No dependencias circulares detectadas
+✓ Git status: cambios solo en mobile, sin commitear (según regla orquestador)
+
+PENDIENTES / FUTURO (F2+):
+--------------------------
+1. Servidor: endpoint sync dedicado con cursor + idempotency validation
+2. Fotos/firmas: cola separada de assets (evitar base64 pesado en outbox SQLite)
+3. Conflict resolution UI: para workOrders con localRev>0 y server diverge
+4. Background fetch nativo (expo-task-manager) para sync sin abrir app
+5. Métricas de sync (latencia, throughput, conflictos) en analytics
+6. Tests unitarios de cache/outbox/engine (vitest no configurado en mobile)
+
+NOTAS:
+------
+- El flujo de OT existente (TodayWorkOrdersScreen -> Detail -> Flow -> complete)
+  funciona idéntico offline: completa local, banner muestra "1 cambio pendiente",
+  al recuperar señal sincroniza automático.
+- Si el técnico navega a detalle offline de OT no cacheada -> "No encontramos..."
+  (mejora futura: precargar detail en pull).
+- La arquitectura hexagonal se mantiene: domain/repository unchanged,
+  infraestructura nueva en features/sync/infrastructure.
+
