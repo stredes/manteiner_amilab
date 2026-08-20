@@ -413,6 +413,36 @@ EOF
   log "Mobile .env → LAN $lan_ip"
 }
 
+start_network_watcher() {
+  local pid_file; pid_file="$(service_pid netwatch)"
+  if is_running "$pid_file"; then return 0; fi
+  (
+    local last_ip=""
+    while true; do
+      local current_ip; current_ip="$(detect_lan_ip)"
+      if [[ -n "$current_ip" && "$current_ip" != "$last_ip" ]]; then
+        if [[ -n "$last_ip" ]]; then
+          warn "Red cambió: $last_ip → $current_ip"
+          write_mobile_env
+          ok "Mobile .env actualizado para $current_ip"
+        fi
+        last_ip="$current_ip"
+      fi
+      sleep 5
+    done
+  ) &
+  echo $! >"$pid_file"
+  log "Network watcher PID $!"
+}
+
+stop_network_watcher() {
+  local pid_file; pid_file="$(service_pid netwatch)"
+  [[ -f "$pid_file" ]] || return 0
+  local pid; pid="$(cat "$pid_file")"
+  kill "$pid" 2>/dev/null || true
+  rm -f "$pid_file"
+}
+
 # ─── START FUNCTIONS ──────────────────────────────────────────────────
 
 start_shared() {
@@ -520,11 +550,13 @@ up() {
   start_api
   start_admin
   start_mobile
+  start_network_watcher
   show_status
 }
 
 down() {
   hdr "Deteniendo Amilab"
+  stop_network_watcher
   stop_background mobile; stop_background admin; stop_background api; stop_background shared
   (cd "$API_DIR" && docker compose down >>"$(service_log docker)" 2>&1 || true)
   ok "Todo detenido"
