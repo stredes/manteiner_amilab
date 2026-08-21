@@ -379,19 +379,23 @@ start_background() {
   if is_running "$pid_file"; then log "$name ya corriendo PID $(cat "$pid_file")"; return 0; fi
   local log_file; log_file="$(service_log "$name")"; : >"$log_file"
   local terminal_cmd
-  if ! terminal_cmd="$(detect_terminal_emulator)"; then
+  if ! terminal_cmd="$(detect_terminal_emulator 2>/dev/null)"; then
     (cd "$workdir"; nohup "$@" >>"$log_file" 2>&1 & echo $! >"$pid_file")
     sleep 1
     if ! is_running "$pid_file"; then err "No pude levantar $name. Revisa $log_file"; return 1; fi
     log "$name arriba PID $(cat "$pid_file")"; return 0
   fi
+  local display_env=""
+  [[ -n "${DISPLAY:-}" ]] && display_env="DISPLAY=$DISPLAY"
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] && display_env="$display_env WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
+  [[ -n "${XDG_RUNTIME_DIR:-}" ]] && display_env="$display_env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
   local child_pid
   case "$terminal_cmd" in
-    alacritty) "$terminal_cmd" --title "Amilab $name" --working-directory "$workdir" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
-    gnome-terminal) "$terminal_cmd" --title="Amilab $name" --working-directory="$workdir" -- bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
-    konsole) "$terminal_cmd" --new-tab --title "Amilab $name" -e bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
-    kitty) "$terminal_cmd" --title "Amilab $name" --working-directory "$workdir" bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
-    *) "$terminal_cmd" -T "Amilab $name" -e bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
+    alacritty) env $display_env "$terminal_cmd" --title "Amilab $name" --working-directory "$workdir" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
+    gnome-terminal) env $display_env "$terminal_cmd" --title="Amilab $name" --working-directory="$workdir" -- bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
+    konsole) env $display_env "$terminal_cmd" --new-tab --title "Amilab $name" -e bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
+    kitty) env $display_env "$terminal_cmd" --title "Amilab $name" --working-directory "$workdir" bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
+    *) env $display_env "$terminal_cmd" -T "Amilab $name" -e bash -lc 'cd "$PWD" && exec "$@"' bash "$@" >"$log_file" 2>&1 & child_pid=$! ;;
   esac
   echo "$child_pid" >"$pid_file"; sleep 2
   log "$name enviado a terminal PID $child_pid"; return 0
@@ -509,12 +513,16 @@ start_mobile() {
 
   local terminal_cmd
   if terminal_cmd="$(detect_terminal_emulator 2>/dev/null)"; then
+    local display_env=""
+    [[ -n "${DISPLAY:-}" ]] && display_env="DISPLAY=$DISPLAY"
+    [[ -n "${WAYLAND_DISPLAY:-}" ]] && display_env="$display_env WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
+    [[ -n "${XDG_RUNTIME_DIR:-}" ]] && display_env="$display_env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
     case "$terminal_cmd" in
-      alacritty) "$terminal_cmd" --title "Amilab mobile" --working-directory "$MOBILE_DIR" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
+      alacritty) env $display_env "$terminal_cmd" --title "Amilab mobile" --working-directory "$MOBILE_DIR" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
         echo $! >"$pid_file" ;;
-      gnome-terminal) "$terminal_cmd" --title="Amilab mobile" --working-directory="$MOBILE_DIR" -- bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
+      gnome-terminal) env $display_env "$terminal_cmd" --title="Amilab mobile" --working-directory="$MOBILE_DIR" -- bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
         echo $! >"$pid_file" ;;
-      *) "$terminal_cmd" -T "Amilab mobile" -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
+      *) env $display_env "$terminal_cmd" -T "Amilab mobile" -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
         echo $! >"$pid_file" ;;
     esac
   else
