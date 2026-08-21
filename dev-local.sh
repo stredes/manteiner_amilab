@@ -19,6 +19,7 @@ REDIS_PORT="${AMILABREDIS_PORT:-6379}"
 TERMINAL_EMULATOR="${AMILAB_TERMINAL:-}"
 
 mkdir -p "$LOG_DIR" "$PID_DIR"
+setup_display_env 2>/dev/null || true
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -321,42 +322,28 @@ cmd_doctor() {
 
 # ─── FUNCIONES EXISTENTES ─────────────────────────────────────────────
 
-detect_terminal_emulator() {
-  # Check current session first
-  if [[ -n "${DISPLAY:-}" && -n "$(command -v alacritty 2>/dev/null || true)" ]]; then
-    printf '%s' "alacritty"
-    return 0
-  fi
-  if [[ -n "${WAYLAND_DISPLAY:-}" && -n "$(command -v alacritty 2>/dev/null || true)" ]]; then
-    printf '%s' "alacritty"
-    return 0
-  fi
-
-  # Detect from running display server (for SSH sessions)
+setup_display_env() {
+  if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then return 0; fi
   local xdg_run="/run/user/$(id -u)"
   if [[ -d "$xdg_run" ]]; then
-    local wayland_socket
-    for wayland_socket in "$xdg_run"/wayland-*; do
-      [[ -S "$wayland_socket" ]] || continue
-      export WAYLAND_DISPLAY="$(basename "$wayland_socket")"
+    for s in "$xdg_run"/wayland-*; do
+      [[ -S "$s" ]] || continue
+      export WAYLAND_DISPLAY="$(basename "$s")"
       export XDG_RUNTIME_DIR="$xdg_run"
       break
     done
     if [[ -S "/tmp/.X11-unix/X0" ]]; then
       export DISPLAY=":0"
     fi
-    if [[ -n "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
-      printf '%s' "alacritty"
-      return 0
-    fi
   fi
+}
 
-  if [[ -n "${DISPLAY:-}" ]]; then
-    for candidate in alacritty gnome-terminal x-terminal-emulator konsole kitty xfce4-terminal terminator xterm; do
-      if command -v "$candidate" >/dev/null 2>&1; then printf '%s' "$candidate"; return 0; fi
-    done
-  fi
-
+detect_terminal_emulator() {
+  setup_display_env
+  if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then return 1; fi
+  for candidate in alacritty gnome-terminal konsole kitty xfce4-terminal terminator xterm; do
+    if command -v "$candidate" >/dev/null 2>&1; then printf '%s' "$candidate"; return 0; fi
+  done
   return 1
 }
 
