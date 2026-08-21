@@ -337,19 +337,17 @@ detect_terminal_emulator() {
   if [[ -d "$xdg_run" ]]; then
     local wayland_socket
     for wayland_socket in "$xdg_run"/wayland-*; do
-      [[ -S "$wayland_socket" ]] && WAYLAND_DISPLAY="$(basename "$wayland_socket")" && export WAYLAND_DISPLAY && export XDG_RUNTIME_DIR="$xdg_run"
-      if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
-        printf '%s' "alacritty"
-        return 0
-      fi
+      [[ -S "$wayland_socket" ]] || continue
+      export WAYLAND_DISPLAY="$(basename "$wayland_socket")"
+      export XDG_RUNTIME_DIR="$xdg_run"
+      break
     done
-    local x11_sock="/tmp/.X11-unix/X0"
-    if [[ -S "$x11_sock" ]]; then
-      DISPLAY=":0" && export DISPLAY
-      if command -v alacritty >/dev/null 2>&1; then
-        printf '%s' "alacritty"
-        return 0
-      fi
+    if [[ -S "/tmp/.X11-unix/X0" ]]; then
+      export DISPLAY=":0"
+    fi
+    if [[ -n "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
+      printf '%s' "alacritty"
+      return 0
     fi
   fi
 
