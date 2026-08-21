@@ -322,11 +322,43 @@ cmd_doctor() {
 # ─── FUNCIONES EXISTENTES ─────────────────────────────────────────────
 
 detect_terminal_emulator() {
-  if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then return 1; fi
-  if [[ -n "$TERMINAL_EMULATOR" ]]; then printf '%s' "$TERMINAL_EMULATOR"; return 0; fi
-  for candidate in alacritty gnome-terminal x-terminal-emulator konsole kitty xfce4-terminal terminator xterm; do
-    if command -v "$candidate" >/dev/null 2>&1; then printf '%s' "$candidate"; return 0; fi
-  done
+  # Check current session first
+  if [[ -n "${DISPLAY:-}" && -n "$(command -v alacritty 2>/dev/null || true)" ]]; then
+    printf '%s' "alacritty"
+    return 0
+  fi
+  if [[ -n "${WAYLAND_DISPLAY:-}" && -n "$(command -v alacritty 2>/dev/null || true)" ]]; then
+    printf '%s' "alacritty"
+    return 0
+  fi
+
+  # Detect from running display server (for SSH sessions)
+  local xdg_run="/run/user/$(id -u)"
+  if [[ -d "$xdg_run" ]]; then
+    local wayland_socket
+    for wayland_socket in "$xdg_run"/wayland-*; do
+      [[ -S "$wayland_socket" ]] && WAYLAND_DISPLAY="$(basename "$wayland_socket")" && export WAYLAND_DISPLAY && export XDG_RUNTIME_DIR="$xdg_run"
+      if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v alacritty >/dev/null 2>&1; then
+        printf '%s' "alacritty"
+        return 0
+      fi
+    done
+    local x11_sock="/tmp/.X11-unix/X0"
+    if [[ -S "$x11_sock" ]]; then
+      DISPLAY=":0" && export DISPLAY
+      if command -v alacritty >/dev/null 2>&1; then
+        printf '%s' "alacritty"
+        return 0
+      fi
+    fi
+  fi
+
+  if [[ -n "${DISPLAY:-}" ]]; then
+    for candidate in alacritty gnome-terminal x-terminal-emulator konsole kitty xfce4-terminal terminator xterm; do
+      if command -v "$candidate" >/dev/null 2>&1; then printf '%s' "$candidate"; return 0; fi
+    done
+  fi
+
   return 1
 }
 
@@ -478,7 +510,7 @@ start_mobile() {
   local log_file; log_file="$(service_log mobile)"; : >"$log_file"
 
   local terminal_cmd
-  if terminal_cmd="$(detect_terminal_emulator)"; then
+  if terminal_cmd="$(detect_terminal_emulator 2>/dev/null)"; then
     case "$terminal_cmd" in
       alacritty) "$terminal_cmd" --title "Amilab mobile" --working-directory "$MOBILE_DIR" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
         echo $! >"$pid_file" ;;
@@ -492,14 +524,20 @@ start_mobile() {
       echo $! >"$pid_file")
   fi
 
-  sleep 3
+  sleep 4
   for ((i = 1; i <= 20; i++)); do
     if is_port_in_use "$EXPO_PORT"; then
       ok "Expo listo en $EXPO_PORT"
-      if [[ ! "$(detect_terminal_emulator 2>/dev/null)" ]]; then
-        printf "\n${BOLD}${CYAN}QR / URL de Expo:${NC}\n"
-        tail -n 30 "$log_file" 2>/dev/null
+      local lan_ip; lan_ip="$(detect_lan_ip)"
+      printf "\n${BOLD}${CYAN}═══ MOBILE ═══${NC}\n"
+      printf "  Expo Go: ${BOLD}http://%s:%s${NC}\n" "$lan_ip" "$EXPO_PORT"
+      printf "  API:     ${BOLD}http://%s:%s/api${NC}\n" "$lan_ip" "$API_PORT"
+      printf "  Admin:   ${BOLD}http://%s:%s${NC}\n" "$lan_ip" "$ADMIN_PORT"
+      if [[ -s "$log_file" ]]; then
+        printf "\n${DIM}Log:${NC}\n"
+        grep -iE "exp|qr|url|http|ready|network|metro" "$log_file" 2>/dev/null | tail -10 || tail -n 5 "$log_file" 2>/dev/null
       fi
+      printf "\n"
       return 0
     fi
     sleep 1
