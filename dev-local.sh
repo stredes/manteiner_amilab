@@ -473,12 +473,36 @@ start_admin() {
 start_mobile() {
   write_mobile_env
   if is_port_in_use "$EXPO_PORT"; then ok "Expo ya en $EXPO_PORT"; return 0; fi
-  start_background mobile "$MOBILE_DIR" env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear
-  for ((i = 1; i <= 15; i++)); do
-    is_port_in_use "$EXPO_PORT" && { ok "Expo listo en $EXPO_PORT"; return 0; }
+
+  local pid_file; pid_file="$(service_pid mobile)"
+  local log_file; log_file="$(service_log mobile)"; : >"$log_file"
+
+  local terminal_cmd
+  if terminal_cmd="$(detect_terminal_emulator)"; then
+    case "$terminal_cmd" in
+      alacritty) "$terminal_cmd" --title "Amilab mobile" --working-directory "$MOBILE_DIR" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
+        echo $! >"$pid_file" ;;
+      gnome-terminal) "$terminal_cmd" --title="Amilab mobile" --working-directory="$MOBILE_DIR" -- bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
+        echo $! >"$pid_file" ;;
+      *) "$terminal_cmd" -T "Amilab mobile" -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
+        echo $! >"$pid_file" ;;
+    esac
+  else
+    (cd "$MOBILE_DIR"; nohup env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >>"$log_file" 2>&1 &
+      echo $! >"$pid_file")
+  fi
+
+  sleep 3
+  for ((i = 1; i <= 20; i++)); do
+    if is_port_in_use "$EXPO_PORT"; then
+      ok "Expo listo en $EXPO_PORT"
+      printf "\n${BOLD}${CYAN}Escanea el QR con Expo Go:${NC}\n"
+      tail -n 20 "$log_file" 2>/dev/null
+      return 0
+    fi
     sleep 1
   done
-  warn "Expo no quedó listo en $EXPO_PORT"
+  warn "Expo no quedó listo. Revisa: tail -f $(service_log mobile)"
 }
 
 # ─── SHOW STATUS ──────────────────────────────────────────────────────
