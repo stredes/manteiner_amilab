@@ -480,11 +480,11 @@ start_mobile() {
   local terminal_cmd
   if terminal_cmd="$(detect_terminal_emulator)"; then
     case "$terminal_cmd" in
-      alacritty) "$terminal_cmd" --title "Amilab mobile" --working-directory "$MOBILE_DIR" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
+      alacritty) "$terminal_cmd" --title "Amilab mobile" --working-directory "$MOBILE_DIR" --hold -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
         echo $! >"$pid_file" ;;
-      gnome-terminal) "$terminal_cmd" --title="Amilab mobile" --working-directory="$MOBILE_DIR" -- bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
+      gnome-terminal) "$terminal_cmd" --title="Amilab mobile" --working-directory="$MOBILE_DIR" -- bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
         echo $! >"$pid_file" ;;
-      *) "$terminal_cmd" -T "Amilab mobile" -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear >"$log_file" 2>&1 &
+      *) "$terminal_cmd" -T "Amilab mobile" -e bash -lc 'cd "$PWD" && exec "$@"' bash env CI=1 pnpm exec expo start --host lan --port "$EXPO_PORT" --clear &
         echo $! >"$pid_file" ;;
     esac
   else
@@ -496,8 +496,10 @@ start_mobile() {
   for ((i = 1; i <= 20; i++)); do
     if is_port_in_use "$EXPO_PORT"; then
       ok "Expo listo en $EXPO_PORT"
-      printf "\n${BOLD}${CYAN}Escanea el QR con Expo Go:${NC}\n"
-      tail -n 20 "$log_file" 2>/dev/null
+      if [[ ! "$(detect_terminal_emulator 2>/dev/null)" ]]; then
+        printf "\n${BOLD}${CYAN}QR / URL de Expo:${NC}\n"
+        tail -n 30 "$log_file" 2>/dev/null
+      fi
       return 0
     fi
     sleep 1
